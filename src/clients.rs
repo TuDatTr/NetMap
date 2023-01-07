@@ -16,13 +16,18 @@ impl Sender {
             target_address,
         }
     }
-    pub fn run(self, data_rate: f64, packet_size: usize, sleep_adjust_factor: u32) -> thread::JoinHandle<()> {
+    pub fn run(
+        self,
+        data_rate: f64,
+        packet_size: usize,
+        sleep_adjust_factor: u32,
+    ) -> thread::JoinHandle<()> {
         // const BUF_SIZE: usize =  65536;
         const BUF_SIZE: usize = 9000;
         let mut buf = [0; BUF_SIZE]; // Increase the buffer size to hold at least 9000 bytes
 
-        let payload_size: usize = packet_size - UDP_HEADER_SIZE; // size of packets to send in bytes
         const UDP_HEADER_SIZE: usize = 42;
+        let payload_size: usize = packet_size - UDP_HEADER_SIZE; // size of packets to send in bytes
 
         let payload: Vec<u8> = vec![0; payload_size]; // create a vector of 0s with the specified packet size
         let packet_size_bits = payload_size * 8; // size of packets in bits
@@ -37,6 +42,7 @@ impl Sender {
         let mut sleep_timer = Duration::from_micros(0);
 
         // Start a timer to measure the elapsed time.
+        let total_time = Instant::now();
         let mut iteration_start = Instant::now();
         let mut second_timer = Instant::now();
         let mut sleep_duration = target_iteration_duration;
@@ -47,7 +53,11 @@ impl Sender {
             data_rate, payload_size, target_iteration_duration
         );
 
-        let mut adjustments = 0i64;
+        let mut packets_received = 0;
+
+        // debug variable to see how the congestion control adjusts the throughput
+        let mut adjustments = 0;
+
         thread::spawn(move || {
             loop {
                 // Send the data.
@@ -56,6 +66,16 @@ impl Sender {
                     .send_to(&payload, self.target_address)
                     .unwrap(); // send the data
                 trace!("Sent {} bytes to {}", payload_size, &self.target_address);
+
+                match &self.recv_socket.recv_from(&mut buf) {
+                    Ok((size, src)) => {
+                        trace!("received {} bytes from {:?}", size, src); // Use logging with tracing
+                        packets_received += 1;
+
+                        // trace!("data: {:?}", &buf[..size]); // Use logging with tracing
+                    }
+                    Err(_e) => {}
+                }
 
                 // Pause the loop for the specified interval
                 Self::busy_sleep(sleep_duration);
@@ -67,23 +87,25 @@ impl Sender {
                 // Check if one second has passed.
                 let second_elapsed = second_timer.elapsed();
                 if second_elapsed >= Duration::from_secs(1) {
-                    let _ = &self.loop_log(second_elapsed, sleep_timer, iteration_counter,adjustments);
+                    let _ = &self.loop_log(
+                        second_elapsed,
+                        sleep_timer,
+                        iteration_counter,
+                        adjustments,
+                        total_time.elapsed(),
+                        packet_size,
+                        packets_received,
+                    );
 
                     // Reset the counters and timers.
                     adjustments = 0;
+                    packets_received = 0;
                     iteration_counter = 0;
                     sleep_timer = Duration::from_micros(0);
                     second_timer = Instant::now();
                 }
 
-                match &self.recv_socket.recv_from(&mut buf) {
-                    Ok((size, src)) => {
-                        trace!("received {} bytes from {:?}", size, src); // Use logging with tracing
-
-                        // trace!("data: {:?}", &buf[..size]); // Use logging with tracing
-                    }
-                    Err(_e) => {}
-                }
+                
 
                 buf = unsafe { std::mem::zeroed() };
 
@@ -118,20 +140,36 @@ impl Sender {
         }
     }
 
-    fn adjust_sleep(current: Duration, actual: Duration, target: Duration, factor: u32) -> Duration {
+    fn adjust_sleep(
+        current: Duration,
+        actual: Duration,
+        target: Duration,
+        factor: u32,
+    ) -> Duration {
         Self::aimd(current, actual, target, factor)
     }
 
     fn aimd(current: Duration, actual: Duration, target: Duration, factor: u32) -> Duration {
         debug!("{:?}, {:?}\n", actual, current);
-        if actual >= target { // Multiplicative Decrease 
+        if actual >= target {
+            // Multiplicative Decrease
             current / 2 // Half sleeptime
-        } else { // Addative Increase
+        } else {
+            // Addative Increase
             current + (target / factor) // Add 20% of target time
         }
     }
 
-    fn loop_log(&self, second_elapsed: Duration, sleep_timer: Duration, iteration_counter: u32, adjustments: i64) {
+    fn loop_log(
+        &self,
+        second_elapsed: Duration,
+        sleep_timer: Duration,
+        iteration_counter: u32,
+        adjustments: i32,
+        total_time: Duration,
+        packet_size: usize,
+        packets_received: u32,
+    ) {
         // The average time that each iteration of the loop took to run.
         let avg_pass_time = second_elapsed / iteration_counter;
         // The average time that the loop slept between iterations.
@@ -143,8 +181,35 @@ impl Sender {
             false => Duration::from_micros(0),
         };
 
-        // Display the average pass time.
+        let interval_from = if total_time > Duration::from_secs(1) { // Lower boundary for this interval
+            total_time - Duration::from_secs(1)
+        } else {
+            Duration::from_secs(0)
+        };
+
+        let interval_to = total_time; // Upper boundary for this interval
+        let transfered_mbytes = (iteration_counter * (packet_size as u32)) as f64; // Bytes transfered in this interval
+        let throughput = (transfered_mbytes * 8.0) / second_elapsed.as_secs_f64(); // Bit-Throughput in this interval
+        let packets_sent = iteration_counter; // As count for this interval
+        let packets_received = packets_received; // As count for this interval
+        let loss = packets_received as f64 / packets_sent as f64 * 100.0; // As percentage
+
+        println!(
+            "{:3.1}-{:3.1} {:.2} Mbytes {:.2} Mbit/s {}/{} ({:3.2}%)",
+            interval_from.as_secs_f64(),
+            interval_to.as_secs_f64(),
+            transfered_mbytes/1000000.0,
+            throughput/1000000.0,
+            packets_received,
+            packets_sent,
+            loss
+        );
         info!(
+            "Average pass time: {:?}, Average sleep duration: {:?}, Average runtime: {:?}",
+            avg_pass_time, avg_sleep_duration, avg_runtime,
+        );
+
+        debug!(
             "Average pass time: {:?}, Average sleep duration: {:?}, Average runtime: {:?}, Adjustments(optimal: 0): {}",
             avg_pass_time, avg_sleep_duration, avg_runtime, adjustments
         );
