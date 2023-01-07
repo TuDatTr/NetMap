@@ -58,6 +58,8 @@ impl Sender {
         // debug variable to see how the congestion control adjusts the throughput
         let mut adjustments = 0;
 
+        println!("Interval  Transfered  Throughput  received/sent (loss)");
+
         thread::spawn(move || {
             loop {
                 // Send the data.
