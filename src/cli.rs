@@ -1,8 +1,7 @@
 pub mod modes;
 
 use clap::Parser;
-use modes::{GpsMode, RunMode};
-use std::path::PathBuf;
+use modes::RunMode;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -16,8 +15,4 @@ pub struct Cli {
     /// set whether to run as a sender or receiver
     #[command(subcommand)]
     pub mode: RunMode,
-
-    /// set the method by which the GPS information is provided
-    #[arg(short, long, default_value_t = GpsMode::Phone {device: PathBuf::from("/dev/USB0")})]
-    pub gpsmode: GpsMode,
 }

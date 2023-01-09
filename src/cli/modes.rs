@@ -1,4 +1,4 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ pub enum RunMode {
         target_port: u16,
 
         /// data rate in mbps
-        #[arg(short = 'd', long, default_value_t = DEFAULT_DATA_RATE)]
+        #[arg(short = 'b', long, default_value_t = DEFAULT_DATA_RATE)]
         data_rate: f64,
 
         /// packet size in bytes
@@ -42,6 +42,14 @@ pub enum RunMode {
         /// file to write output to
         #[arg(short = 'o', long)]
         output_file: Option<PathBuf>,
+
+        /// set the method by which the GPS information is provided
+        #[arg(short, long, default_value_t = GpsMode::Phone)]
+        gps_mode: GpsMode,
+
+        /// Path to the GPS device
+        #[arg(short = 'd', long, default_value = "/dev/USB0")]
+        gps_device: String,
     },
     /// Run as the Receiver.
     Receiver {
@@ -65,11 +73,13 @@ impl fmt::Display for RunMode {
                 data_rate,
                 packet_size,
                 sleep_adjust,
+                gps_mode,
+                gps_device,
                 output_file: _,
             } => write!(
                 f,
-                "Sender({}) -> {}:{}@{}/{}",
-                sleep_adjust, target_ip, target_port, data_rate, packet_size
+                "Sender({}) -> {}:{}@{}/{}\nGPS: {} {}",
+                sleep_adjust, target_ip, target_port, data_rate, packet_size, gps_mode, gps_device
             ),
             RunMode::Receiver {
                 port,
@@ -79,46 +89,19 @@ impl fmt::Display for RunMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum GpsMode {
     /// Run in a mode that takes GPS information from a GPS receiver attached to the host.
-    Host {
-        /// Path to the USB device
-        device: PathBuf,
-    },
+    Host,
     /// Run in a mode that takes GPS information from a phone that forwards the GPS information to the host.
-    Phone {
-        /// Path to the USB device
-        device: PathBuf,
-    },
+    Phone,
 }
 
 impl fmt::Display for GpsMode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self {
-            GpsMode::Host { device } => write!(f, "Host {}", device.display()),
-            GpsMode::Phone { device } => write!(f, "Phone {}", device.display()),
-        }
-    }
-}
-
-impl FromStr for GpsMode {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts: Vec<&str> = s.split(' ').collect();
-        if parts.len() != 2 {
-            return Err(format!("invalid GPS mode: {}", s));
-        }
-
-        let mode = parts[0];
-        let device = parts[1];
-        let device = PathBuf::from(device);
-
-        match mode {
-            "Host" => Ok(GpsMode::Host { device }),
-            "Phone" => Ok(GpsMode::Phone { device }),
-            _ => Err(format!("invalid GPS mode: {}", s)),
+            GpsMode::Host => write!(f, "host"),
+            GpsMode::Phone => write!(f, "phone"),
         }
     }
 }

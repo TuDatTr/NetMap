@@ -1,9 +1,11 @@
 mod cli;
 mod clients;
+mod gps;
 
 use clap::Parser;
-use cli::{modes::RunMode, Cli};
+use cli::{modes::GpsMode, modes::RunMode, Cli};
 use clients::{Receiver, Sender};
+use gps::{Host, Phone};
 use std::net::{SocketAddr, UdpSocket};
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -14,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(subscriber).expect("setting tracing default failed");
 
     let cli = Cli::parse();
-    let handler = match cli.mode {
+    let client_handler = match cli.mode {
         RunMode::Sender {
             port,
             target_ip,
@@ -22,8 +24,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             data_rate,
             packet_size,
             sleep_adjust,
+            gps_mode,
+            gps_device,
             output_file: _,
         } => {
+            let _gps_handler = match gps_mode {
+                GpsMode::Host => {
+                    let host = Host::new(gps_device);
+                    host.run()
+                }
+                GpsMode::Phone => {
+                    let phone = Phone::new(gps_device);
+                    phone.run()
+                }
+            };
             // Bind to a socket address.
             let recv_socket = UdpSocket::bind(format!("127.0.0.1:{}", port)).unwrap();
             recv_socket.set_nonblocking(true)?;
@@ -42,6 +56,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             receiver.run()
         }
     };
-    handler.join().unwrap();
+
+    let handlers = vec![client_handler];
+
+    for thread in handlers {
+        thread.join().unwrap();
+    }
     Ok(())
 }

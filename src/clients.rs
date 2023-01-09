@@ -37,14 +37,9 @@ impl Sender {
         let total_iteration_duration = total_iteration_duration * 1_000_000_000.0; // convert to nanoseconds
         let target_iteration_duration = Duration::from_nanos(total_iteration_duration as u64);
 
-        // Add a counter variable to keep track of the number of iterations.
-        let mut iteration_counter = 0;
-        let mut sleep_timer = Duration::from_micros(0);
-
         // Start a timer to measure the elapsed time.
         let total_time = Instant::now();
         let mut iteration_start = Instant::now();
-        let mut second_timer = Instant::now();
         let mut sleep_duration = target_iteration_duration;
 
         // Log the data rate, packet size, and interval.
@@ -53,10 +48,7 @@ impl Sender {
             data_rate, payload_size, target_iteration_duration
         );
 
-        let mut packets_received = 0;
-
-        // debug variable to see how the congestion control adjusts the throughput
-        let mut adjustments = 0;
+        let mut loop_log_data = LoopLogData::new();
 
         println!("Interval  Transfered  Throughput  received/sent (loss)");
 
@@ -72,7 +64,7 @@ impl Sender {
                 match &self.recv_socket.recv_from(&mut buf) {
                     Ok((size, src)) => {
                         trace!("received {} bytes from {:?}", size, src); // Use logging with tracing
-                        packets_received += 1;
+                        loop_log_data.packets_received += 1;
 
                         // trace!("data: {:?}", &buf[..size]); // Use logging with tracing
                     }
@@ -83,31 +75,22 @@ impl Sender {
                 Self::busy_sleep(sleep_duration);
 
                 // Increment iteration counter and iteration_timer
-                iteration_counter += 1;
-                sleep_timer += sleep_duration;
+                loop_log_data.iteration_counter += 1;
+                loop_log_data.sleep_timer += sleep_duration;
 
                 // Check if one second has passed.
-                let second_elapsed = second_timer.elapsed();
+                let second_elapsed = loop_log_data.second_timer.elapsed();
                 if second_elapsed >= Duration::from_secs(1) {
                     let _ = &self.loop_log(
+                        &loop_log_data,
                         second_elapsed,
-                        sleep_timer,
-                        iteration_counter,
-                        adjustments,
                         total_time.elapsed(),
                         packet_size,
-                        packets_received,
                     );
 
                     // Reset the counters and timers.
-                    adjustments = 0;
-                    packets_received = 0;
-                    iteration_counter = 0;
-                    sleep_timer = Duration::from_micros(0);
-                    second_timer = Instant::now();
+                    loop_log_data.reset();
                 }
-
-                
 
                 buf = unsafe { std::mem::zeroed() };
 
@@ -122,9 +105,9 @@ impl Sender {
                 );
 
                 if former_sleep_duration < sleep_duration {
-                    adjustments += 1;
+                    loop_log_data.adjustments += 1;
                 } else {
-                    adjustments -= 1;
+                    loop_log_data.adjustments -= 1;
                 }
                 iteration_start = Instant::now();
             }
@@ -152,7 +135,7 @@ impl Sender {
     }
 
     fn aimd(current: Duration, actual: Duration, target: Duration, factor: u32) -> Duration {
-        debug!("{:?}, {:?}\n", actual, current);
+        trace!("{:?}, {:?}\n", actual, current);
         if actual >= target {
             // Multiplicative Decrease
             current / 2 // Half sleeptime
@@ -164,18 +147,15 @@ impl Sender {
 
     fn loop_log(
         &self,
+        loop_log_data: &LoopLogData,
         second_elapsed: Duration,
-        sleep_timer: Duration,
-        iteration_counter: u32,
-        adjustments: i32,
         total_time: Duration,
         packet_size: usize,
-        packets_received: u32,
     ) {
         // The average time that each iteration of the loop took to run.
-        let avg_pass_time = second_elapsed / iteration_counter;
+        let avg_pass_time = second_elapsed / loop_log_data.iteration_counter;
         // The average time that the loop slept between iterations.
-        let avg_sleep_duration = sleep_timer / iteration_counter;
+        let avg_sleep_duration = loop_log_data.sleep_timer / loop_log_data.iteration_counter;
 
         // The average time that each iteration of the loop took to run, minus the average time that the loop slept between iterations.
         let avg_runtime = match avg_pass_time > avg_sleep_duration {
@@ -183,38 +163,64 @@ impl Sender {
             false => Duration::from_micros(0),
         };
 
-        let interval_from = if total_time > Duration::from_secs(1) { // Lower boundary for this interval
+        let interval_from = if total_time > Duration::from_secs(1) {
+            // Lower boundary for this interval
             total_time - Duration::from_secs(1)
         } else {
             Duration::from_secs(0)
         };
 
         let interval_to = total_time; // Upper boundary for this interval
-        let transfered_mbytes = (iteration_counter * (packet_size as u32)) as f64; // Bytes transfered in this interval
+        let transfered_mbytes = (loop_log_data.iteration_counter * (packet_size as u32)) as f64; // Bytes transfered in this interval
         let throughput = (transfered_mbytes * 8.0) / second_elapsed.as_secs_f64(); // Bit-Throughput in this interval
-        let packets_sent = iteration_counter; // As count for this interval
-        let packets_received = packets_received; // As count for this interval
+        let packets_sent = loop_log_data.iteration_counter; // As count for this interval
+        let packets_received = loop_log_data.packets_received; // As count for this interval
         let loss = packets_received as f64 / packets_sent as f64 * 100.0; // As percentage
 
         println!(
             "{:3.1}-{:3.1} {:.2} Mbytes {:.2} Mbit/s {}/{} ({:3.2}%)",
             interval_from.as_secs_f64(),
             interval_to.as_secs_f64(),
-            transfered_mbytes/1000000.0,
-            throughput/1000000.0,
+            transfered_mbytes / 1000000.0,
+            throughput / 1000000.0,
             packets_received,
             packets_sent,
             loss
         );
-        info!(
-            "Average pass time: {:?}, Average sleep duration: {:?}, Average runtime: {:?}",
-            avg_pass_time, avg_sleep_duration, avg_runtime,
-        );
 
-        debug!(
+        info!(
             "Average pass time: {:?}, Average sleep duration: {:?}, Average runtime: {:?}, Adjustments(optimal: 0): {}",
-            avg_pass_time, avg_sleep_duration, avg_runtime, adjustments
+            avg_pass_time, avg_sleep_duration, avg_runtime, loop_log_data.adjustments
         );
+    }
+}
+
+struct LoopLogData {
+    // debug variable to see how the congestion control adjusts the throughput
+    adjustments: i32,
+    packets_received: u32,
+    iteration_counter: u32,
+    // Add a counter variable to keep track of the number of iterations.
+    sleep_timer: Duration,
+    second_timer: Instant,
+}
+
+impl LoopLogData {
+    fn new() -> Self {
+        LoopLogData {
+            adjustments: 0,
+            packets_received: 0,
+            iteration_counter: 0,
+            sleep_timer: Duration::from_micros(0),
+            second_timer: Instant::now(),
+        }
+    }
+    fn reset(&mut self) {
+        self.adjustments = 0;
+        self.packets_received = 0;
+        self.iteration_counter = 0;
+        self.sleep_timer = Duration::from_micros(0);
+        self.second_timer = Instant::now();
     }
 }
 
