@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             // Bind to a socket address.
-            let recv_socket = UdpSocket::bind(format!("127.0.0.1:{}", port)).unwrap();
+            let recv_socket = UdpSocket::bind(format!("0.0.0.0:{}", port)).unwrap();
             recv_socket.set_nonblocking(true)?;
 
             // Create the target socket address.

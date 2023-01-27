@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 const DEFAULT_TARGET_IP: &str = "127.0.0.1";
-const DEFAULT_SENDER_PORT: u16 = 1234;
-const DEFAULT_RECEIVER_PORT: u16 = 4321;
+const DEFAULT_SENDER_PORT: u16 = 12345;
+const DEFAULT_RECEIVER_PORT: u16 = 54321;
 const DEFAULT_PACKET_COUNT: u32 = 100;
 const DEFAULT_PACKET_SIZE: u16 = 80; // in bytes
 

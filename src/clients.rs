@@ -2,8 +2,9 @@ use std::net::{SocketAddr, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
+#[derive(Debug)]
 pub struct Sender {
     recv_socket: UdpSocket,
     target_address: SocketAddr,
@@ -11,10 +12,12 @@ pub struct Sender {
 
 impl Sender {
     pub fn new(recv_socket: UdpSocket, target_address: SocketAddr) -> Self {
-        Self {
+        let sender = Self {
             recv_socket,
             target_address,
-        }
+        };
+        debug!("Created Sender: {:?}", &sender);
+        sender
     }
 
     pub fn run(self, pkt_count: u32, packet_size: u16) -> thread::JoinHandle<()> {
@@ -32,7 +35,12 @@ impl Sender {
                 let _ = &self
                     .recv_socket
                     .send_to(&payload, self.target_address)
-                    .unwrap(); // send the data
+                    .unwrap_or_else(|e| {
+                        error!("Unable to send packet: {}", e);
+                        0
+                    });
+                info!("Payload: {:?}", payload);
+                info!("Target: {:?}", self.target_address);
             }
 
             match &self.recv_socket.recv_from(&mut buf) {
@@ -51,7 +59,7 @@ pub struct Receiver {
 
 impl Receiver {
     pub fn new(port: u16) -> Self {
-        let socket = UdpSocket::bind(format!("127.0.0.1:{}", port)).unwrap();
+        let socket = UdpSocket::bind(format!("0.0.0.0:{}", port)).unwrap();
         socket.set_nonblocking(true).unwrap();
         Self { socket }
     }
