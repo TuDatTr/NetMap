@@ -7,11 +7,10 @@ use std::str::FromStr;
 const DEFAULT_TARGET_IP: &str = "127.0.0.1";
 const DEFAULT_SENDER_PORT: u16 = 1234;
 const DEFAULT_RECEIVER_PORT: u16 = 4321;
-const DEFAULT_DATA_RATE: f64 = 1.0; // in mbps
-const DEFAULT_PACKET_SIZE: usize = 1500; // in bytes
-const DEFAULT_SLEEP_ADJUST: u32 = 10;
+const DEFAULT_PACKET_COUNT: u32 = 100;
+const DEFAULT_PACKET_SIZE: u16 = 80; // in bytes
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Subcommand)]
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Subcommand)]
 pub enum RunMode {
     /// Run as the Sender.
     Sender {
@@ -27,17 +26,13 @@ pub enum RunMode {
         #[arg(short = 'P', long, default_value_t = DEFAULT_RECEIVER_PORT)]
         target_port: u16,
 
-        /// data rate in mbps
-        #[arg(short = 'b', long, default_value_t = DEFAULT_DATA_RATE)]
-        data_rate: f64,
+        /// amount of packets to send
+        #[arg(short = 'c', long, default_value_t = DEFAULT_PACKET_COUNT)]
+        packet_count: u32,
 
         /// packet size in bytes
         #[arg(short = 's', long, default_value_t = DEFAULT_PACKET_SIZE)]
-        packet_size: usize,
-
-        /// adjust the sleep by this factor
-        #[arg(short = 'f', long, default_value_t = DEFAULT_SLEEP_ADJUST)]
-        sleep_adjust: u32,
+        packet_size: u16,
 
         /// file to write output to
         #[arg(short = 'o', long)]
@@ -70,16 +65,15 @@ impl fmt::Display for RunMode {
                 port: _,
                 target_ip,
                 target_port,
-                data_rate,
+                packet_count,
                 packet_size,
-                sleep_adjust,
                 gps_mode,
                 gps_device,
                 output_file: _,
             } => write!(
                 f,
-                "Sender({}) -> {}:{}@{}/{}\nGPS: {} {}",
-                sleep_adjust, target_ip, target_port, data_rate, packet_size, gps_mode, gps_device
+                "Sender {}:{}@{}/{}\nGPS: {} {}",
+                target_ip, target_port, packet_count, packet_size, gps_mode, gps_device
             ),
             RunMode::Receiver {
                 port,

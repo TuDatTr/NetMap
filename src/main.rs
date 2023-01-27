@@ -21,9 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             port,
             target_ip,
             target_port,
-            data_rate,
+            packet_count,
             packet_size,
-            sleep_adjust,
             gps_mode,
             gps_device,
             output_file: _,
@@ -46,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let target_address = SocketAddr::new(target_ip, target_port);
 
             let sender = Sender::new(recv_socket, target_address);
-            sender.run(data_rate, packet_size, sleep_adjust)
+            sender.run(packet_count, packet_size)
         }
         RunMode::Receiver {
             port,
